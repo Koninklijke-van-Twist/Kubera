@@ -1,0 +1,11 @@
+timestamp=2026-05-21T12:43:48+00:00
+kind=uncaught_exception
+message=syntax error, unexpected token "const"
+file=C:\xampp\htdocs\Kubera\web\content\project_workorders_page.php
+line=18
+severity=
+request_uri=/kubera/web/?debug_odata=1
+request_method=GET
+remote_addr=::1
+session_id=e37vchhhir0pep050u8ru8hcea
+user_email=localtester@kvt.nl

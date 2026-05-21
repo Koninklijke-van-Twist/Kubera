@@ -1,0 +1,14 @@
+
+web/auth.php
+
+web/cache/
+
+BC Webservices.txt
+
+web/data/
+
+vapid-keys/
+
+vendor/
+.phpunit.cache/
+.phpunit.result.cache
