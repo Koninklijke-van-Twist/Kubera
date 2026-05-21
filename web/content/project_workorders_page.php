@@ -207,7 +207,7 @@ function getDepartmentsCachePath(): string
         return (string) TALOS_DEPARTMENTS_CACHE_PATH;
     }
 
-    return __DIR__ . '/../cache/departments.json';
+    return __DIR__ . '/../cache/departments.cache';
 }
 
 function getUserDataDirectoryPath(): string

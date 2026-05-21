@@ -709,7 +709,7 @@
             {
                 try
                 {
-                    const response = await fetch('cache/departments.json', {
+                    const response = await fetch('cache/departments.cache', {
                         method: 'GET',
                         headers: { 'Accept': 'application/json' }
                     });
