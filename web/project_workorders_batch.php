@@ -36,24 +36,13 @@ try {
         exit;
     }
 
-    $environments = function_exists('getActiveEnvironments')
-        ? getActiveEnvironments()
-        : (is_array($environment ?? null) ? $environment : [((string) ($environment ?? ''))]);
+    $environments = activeEnvironmentNamesForOdata();
 
-    $environments = array_values(array_filter(array_map('trim', array_map('strval', $environments)), static function (string $item): bool {
-        return $item !== '';
-    }));
-
-    if (empty($environments) && function_exists('getPrimaryEnvironment')) {
-        $fallbackEnvironment = trim((string) getPrimaryEnvironment());
-        if ($fallbackEnvironment !== '') {
-            $environments = [$fallbackEnvironment];
-        }
-    }
-
-    if (empty($environments)) {
+    if ($environments === [] && !odataReadsUseMimir()) {
         throw new RuntimeException('Geen actieve omgevingen geconfigureerd.');
     }
+
+    $odataBaseUrl = resolveOdataBaseUrl();
 
     $companyName = $selectedCompany;
     $companyEnvironment = function_exists('getEnvironmentForCompany')
@@ -61,7 +50,7 @@ try {
         : '';
 
     if ($companyEnvironment === '') {
-        $companyEnvironmentMap = fetchCompanyEnvironmentMapForProjectOverview($baseUrl, $environments);
+        $companyEnvironmentMap = fetchCompanyEnvironmentMapForProjectOverview($odataBaseUrl, $environments);
         if (function_exists('setCompanyEnvironmentMap')) {
             setCompanyEnvironmentMap($companyEnvironmentMap);
         }
@@ -72,11 +61,9 @@ try {
         }
     }
 
-    $authForEnvironment = function_exists('getAuthForEnvironment')
-        ? getAuthForEnvironment($companyEnvironment)
-        : $auth;
+    $authForEnvironment = resolveOdataAuthForEnvironment($companyEnvironment);
 
-    $companyBaseUrl = buildOdataCompanyUrl($baseUrl, $companyEnvironment, $companyName);
+    $companyBaseUrl = buildOdataCompanyUrl($odataBaseUrl, $companyEnvironment, $companyName);
     $totalCount = null;
     if ($skip === 0) {
         $totalCount = fetchEntityCountForCompany(
@@ -89,7 +76,7 @@ try {
     }
 
     $batchRows = fetchWorkorderBatchForCompany(
-        $baseUrl,
+        $odataBaseUrl,
         $companyEnvironment,
         $authForEnvironment,
         $companyName,
