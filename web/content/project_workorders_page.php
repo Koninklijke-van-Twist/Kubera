@@ -8,6 +8,95 @@ const PROJECT_WORKORDERS_PAGE_SIZE = 10;
 const PROJECT_WORKORDERS_MAX_PAGES = 250;
 const PROJECT_WORKORDERS_CACHE_TTL_SECONDS = 3600;
 
+function odataReadsUseMimir(): bool
+{
+    return function_exists('odata_mimir_enabled') && odata_mimir_enabled();
+}
+
+function resolveOdataBaseUrl(): string
+{
+    global $baseUrl;
+    // Lege $baseUrl is geldig in Mímir-modus; odata_get_all vertaalt het pad.
+    return trim((string) ($baseUrl ?? ''));
+}
+
+function resolveOdataAuthForEnvironment(string $environment): array
+{
+    if (function_exists('getAuthForEnvironment')) {
+        $resolved = getAuthForEnvironment($environment);
+        return is_array($resolved) ? $resolved : [];
+    }
+
+    global $auth;
+    return is_array($auth ?? null) ? $auth : [];
+}
+
+function activeEnvironmentNamesForOdata(): array
+{
+    global $environment;
+
+    $environments = function_exists('getActiveEnvironments')
+        ? getActiveEnvironments()
+        : (is_array($environment ?? null) ? $environment : [((string) ($environment ?? ''))]);
+
+    $environments = array_values(array_filter(array_map('trim', array_map('strval', $environments)), static function (string $item): bool {
+        return $item !== '';
+    }));
+
+    if ($environments === [] && function_exists('getPrimaryEnvironment')) {
+        $primaryEnvironment = trim((string) getPrimaryEnvironment());
+        if ($primaryEnvironment !== '') {
+            $environments = [$primaryEnvironment];
+        }
+    }
+
+    return $environments;
+}
+
+/**
+ * Company-discovery via Mímir companies.php (geen BC auth_list/baseUrl).
+ * Eerste environment wint bij bedrijfsnaam-overlap, net als het BC-pad.
+ *
+ * @return array<string, string>
+ */
+function companyEnvironmentMapFromMimir(array $environments): array
+{
+    if (!function_exists('odata_mimir_companies_as_rows')) {
+        throw new RuntimeException('Mímir company-discovery vereist odata.php.');
+    }
+
+    $rows = odata_mimir_companies_as_rows(null);
+    $filter = [];
+    foreach ($environments as $environmentName) {
+        $env = trim((string) $environmentName);
+        if ($env !== '') {
+            $filter[strtolower($env)] = true;
+        }
+    }
+
+    $map = [];
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $companyName = trim((string) ($row['Name'] ?? ''));
+        $env = trim((string) ($row['environment'] ?? ''));
+        if ($companyName === '' || $env === '') {
+            continue;
+        }
+        if ($filter !== [] && !isset($filter[strtolower($env)])) {
+            continue;
+        }
+        if (isset($map[$companyName]) && $map[$companyName] !== $env) {
+            continue;
+        }
+        $map[$companyName] = $env;
+    }
+
+    ksort($map, SORT_NATURAL | SORT_FLAG_CASE);
+    return $map;
+}
+
 function fetchCompanyRowsForEnvironment(string $baseUrl, string $environment, array $auth): array
 {
     $rootUrl = buildOdataRootUrl($baseUrl, $environment);
@@ -112,7 +201,10 @@ function fetchEntityCountForCompany(
 
 function fetchCompanyEnvironmentMapForProjectOverview(string $baseUrl, array $environments): array
 {
-    global $auth;
+    // Mímir: companies + environments uit Mímir API — geen $auth_list/$baseUrl nodig.
+    if (odataReadsUseMimir()) {
+        return companyEnvironmentMapFromMimir($environments);
+    }
 
     $companyEnvironmentMap = [];
 
@@ -122,11 +214,9 @@ function fetchCompanyEnvironmentMapForProjectOverview(string $baseUrl, array $en
             continue;
         }
 
-        $authForEnvironment = function_exists('getAuthForEnvironment')
-            ? getAuthForEnvironment($env)
-            : (is_array($auth) ? $auth : []);
+        $authForEnvironment = resolveOdataAuthForEnvironment($env);
 
-        if (!is_array($authForEnvironment) || empty($authForEnvironment)) {
+        if ($authForEnvironment === []) {
             throw new RuntimeException('Geen geldige authenticatie gevonden voor omgeving: ' . $env);
         }
 
@@ -482,28 +572,14 @@ $availableCompanies = [];
 $projectOverviewByCompany = [];
 
 try {
-    global $environment;
+    $environments = activeEnvironmentNamesForOdata();
 
-    $environments = function_exists('getActiveEnvironments')
-        ? getActiveEnvironments()
-        : (is_array($environment ?? null) ? $environment : [((string) ($environment ?? ''))]);
-
-    $environments = array_values(array_filter(array_map('trim', array_map('strval', $environments)), static function (string $item): bool {
-        return $item !== '';
-    }));
-
-    if (empty($environments) && function_exists('getPrimaryEnvironment')) {
-        $primaryEnvironment = trim((string) getPrimaryEnvironment());
-        if ($primaryEnvironment !== '') {
-            $environments = [$primaryEnvironment];
-        }
-    }
-
-    if (empty($environments)) {
+    if ($environments === [] && !odataReadsUseMimir()) {
         throw new RuntimeException('Geen actieve omgevingen geconfigureerd.');
     }
 
-    $companyEnvironmentMap = fetchCompanyEnvironmentMapForProjectOverview($baseUrl, $environments);
+    $odataBaseUrl = resolveOdataBaseUrl();
+    $companyEnvironmentMap = fetchCompanyEnvironmentMapForProjectOverview($odataBaseUrl, $environments);
     if (function_exists('setCompanyEnvironmentMap')) {
         setCompanyEnvironmentMap($companyEnvironmentMap);
     }
@@ -524,11 +600,9 @@ try {
                 continue;
             }
 
-            $authForEnvironment = function_exists('getAuthForEnvironment')
-                ? getAuthForEnvironment($companyEnvironment)
-                : $auth;
+            $authForEnvironment = resolveOdataAuthForEnvironment($companyEnvironment);
 
-            $workorderRows = fetchWorkorderRowsForCompany($baseUrl, $companyEnvironment, $authForEnvironment, $companyName);
+            $workorderRows = fetchWorkorderRowsForCompany($odataBaseUrl, $companyEnvironment, $authForEnvironment, $companyName);
             $projectOverviewByCompany[$companyName] = mapWorkordersByJobNo($workorderRows);
         }
     }
