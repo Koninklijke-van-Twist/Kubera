@@ -38,6 +38,7 @@ try {
 
     $environments = activeEnvironmentNamesForOdata();
 
+    // Zelfde afslag als de pagina: Mímir, en bij uitval de directe BC-route in odata.php.
     if ($environments === [] && !odataReadsUseMimir()) {
         throw new RuntimeException('Geen actieve omgevingen geconfigureerd.');
     }

@@ -10,13 +10,14 @@ const PROJECT_WORKORDERS_CACHE_TTL_SECONDS = 3600;
 
 function odataReadsUseMimir(): bool
 {
+    // Key gezet: discovery gaat via Mímir. Een Mímir-fout valt binnen odata.php terug op BC.
     return function_exists('odata_mimir_enabled') && odata_mimir_enabled();
 }
 
 function resolveOdataBaseUrl(): string
 {
     global $baseUrl;
-    // Lege $baseUrl is geldig in Mímir-modus; odata_get_all vertaalt het pad.
+    // Lege $baseUrl is geldig zolang Mímir antwoordt; bij fallback herschrijft odata.php naar $baseUrl uit auth.php.
     return trim((string) ($baseUrl ?? ''));
 }
 
@@ -54,7 +55,8 @@ function activeEnvironmentNamesForOdata(): array
 }
 
 /**
- * Company-discovery via Mímir companies.php (geen BC auth_list/baseUrl).
+ * Company-discovery via Mímir companies.php.
+ * Bij een Mímir-fout valt odata_mimir_companies_as_rows terug op BC ($baseUrl/$auth_list).
  * Eerste environment wint bij bedrijfsnaam-overlap, net als het BC-pad.
  *
  * @return array<string, string>
@@ -201,7 +203,8 @@ function fetchEntityCountForCompany(
 
 function fetchCompanyEnvironmentMapForProjectOverview(string $baseUrl, array $environments): array
 {
-    // Mímir: companies + environments uit Mímir API — geen $auth_list/$baseUrl nodig.
+    // Mímir: companies + environments uit Mímir. Bij een Mímir-fout levert
+    // odata_mimir_companies_as_rows dezelfde lijst via de pre-Mímir BC-route.
     if (odataReadsUseMimir()) {
         return companyEnvironmentMapFromMimir($environments);
     }
@@ -574,6 +577,7 @@ $projectOverviewByCompany = [];
 try {
     $environments = activeEnvironmentNamesForOdata();
 
+    // Mímir-fouten vallen in company-discovery en odata_get_all terug op directe BC.
     if ($environments === [] && !odataReadsUseMimir()) {
         throw new RuntimeException('Geen actieve omgevingen geconfigureerd.');
     }
