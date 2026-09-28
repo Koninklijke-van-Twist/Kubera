@@ -7,7 +7,7 @@
 
 ## Niet wijzigen
 - Bestand `web/logincheck.php` niet aanpassen.
-- Bestand `web/odata.php` niet aanpassen.
+- Bestand `web/odata.php` niet aanpassen, behalve de Mímir-naar-directe-BC-fallback (circuit, environment per bedrijf, lazy auth naar `$GLOBALS`). Tim Falken keurde die uitzondering goed op 2026-09-28.
 - Bestand `web/auth.php` alleen aanpassen na expliciete gebruikersvraag.
 
 ## Data en logica werkorders
@@ -67,7 +67,7 @@
   - geen class-definities tussen page-load code in gecombineerde scriptbestanden
 - Respecteer altijd bestaande uitzonderingen uit deze instructies:
   - `web/logincheck.php` niet aanpassen
-  - `web/odata.php` niet aanpassen
+  - `web/odata.php` niet aanpassen, behalve de Mímir-fallback (uitzondering Tim Falken, 2026-09-28)
   - `web/auth.php` alleen aanpassen na expliciete gebruikersvraag
 
 ## Lokalisatie (meertaligheid)
