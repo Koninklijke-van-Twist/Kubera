@@ -45,7 +45,11 @@ if (!function_exists('getActiveEnvironments')) {
         global $environment, $auth_list;
 
         $configured = talosNormalizeEnvironmentList($environment ?? []);
-        if (!talosMimirEnabled()) {
+        // Na een Mímir-fout in dit proces: dezelfde lokale lijst als vóór de Mímir-migratie.
+        // Geen companies.php meer, anders roept de BC-cachekey zichzelf opnieuw aan.
+        $mimirDiscovery = talosMimirEnabled()
+            && !(function_exists('odata_mimir_circuit_open') && odata_mimir_circuit_open());
+        if (!$mimirDiscovery) {
             if ($configured !== []) {
                 return $configured;
             }
@@ -120,7 +124,8 @@ if (!function_exists('getAuthForEnvironment')) {
         $list = is_array($auth_list ?? null) ? $auth_list : [];
 
         if ($environmentKey === '' || !isset($list[$environmentKey]) || !is_array($list[$environmentKey])) {
-            // Mímir-modus zonder BC-auth: leftover callers krijgen lege auth i.p.v. exception.
+            // Mímir-modus zonder BC-auth voor deze omgeving: lege auth i.p.v. exception.
+            // Bij een Mímir-fout zoekt odata.php alsnog $auth / $auth_list voor de directe BC-call.
             if (talosMimirEnabled()) {
                 return [];
             }
@@ -173,13 +178,17 @@ if (!function_exists('getEnvironmentForCompany')) {
 
 talosEnsureOdataLoaded();
 if (talosMimirEnabled()) {
-    // BC-auth alleen als lokaal geconfigureerd; anders lege sentinel.
+    // BC-auth blijft staan naast $mimirApi, voor de directe fallback als Mímir uitvalt.
     // Geen companies.php-call: ontbrekende BC-config mag deze include niet fatal maken.
-    $auth = [];
     $configuredEnvironments = talosNormalizeEnvironmentList($environment ?? []);
     $primaryEnvironment = (string) ($configuredEnvironments[0] ?? '');
+    $keptAuth = (isset($auth) && is_array($auth)) ? $auth : [];
     if ($primaryEnvironment !== '' && isset($auth_list) && is_array($auth_list) && isset($auth_list[$primaryEnvironment]) && is_array($auth_list[$primaryEnvironment])) {
         $auth = $auth_list[$primaryEnvironment];
+    } elseif ($keptAuth !== []) {
+        $auth = $keptAuth;
+    } else {
+        $auth = [];
     }
 } else {
     $auth = getAuthForEnvironment(getPrimaryEnvironment());
