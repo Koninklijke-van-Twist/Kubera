@@ -100,8 +100,17 @@ $expectedEntityUrl = "https://bc.example:7148/Production/ODataV4/Company('Konink
 if (!is_array($entityCall) || $entityCall['url'] !== $expectedEntityUrl || $entityCall['user'] !== 'bcuser' || $entityCall['ttl'] !== 120) {
     fail('entity-fallback URL/auth/ttl klopt niet: ' . json_encode($entityCall));
 }
-if (fallback_count() < 2) {
-    fail('elke fallback moet gelogd worden, log=' . fallback_log());
+if (fallback_count() !== 1) {
+    fail('alleen de eerste Mímir-fout mag gelogd worden, log=' . fallback_log());
+}
+$loggedWhileOpen = fallback_count();
+odata_get_all(
+    "https://mimir.invalid/Production/ODataV4/Company('Koninklijke%20van%20Twist')/AppWerkorders?\$select=No",
+    $auth,
+    10
+);
+if (fallback_count() !== $loggedWhileOpen) {
+    fail('een open circuit mag niet opnieuw loggen, log=' . fallback_log());
 }
 $log = fallback_log();
 if (strpos($log, 'mimir_test_key_should_not_leak') !== false || strpos($log, 'bc-secret') !== false) {
@@ -174,6 +183,81 @@ if (($map['Hunter van Twist'] ?? '') !== 'Production' || ($map['KVT Gas'] ?? '')
     fail('environment-map viel niet terug op BC: ' . json_encode($map));
 }
 
+odata_mimir_circuit_reset();
+$callerLogged = fallback_count();
+$callerCalls = count($calls);
+$callerError = null;
+try {
+    odata_get_all('https://mimir.invalid/not-an-odata-path', $auth, 10);
+    fail('een onvertaalbare URL moet een caller-fout geven');
+} catch (Throwable $exception) {
+    $callerError = $exception;
+}
+if (!$callerError instanceof Throwable || strpos($callerError->getMessage(), 'kon niet worden vertaald') === false) {
+    fail('caller-fout mist de vertaalboodschap: ' . ($callerError instanceof Throwable ? $callerError->getMessage() : 'geen exception'));
+}
+if (odata_mimir_circuit_open()) {
+    fail('een caller-exception mag het circuit niet openen');
+}
+if (fallback_count() !== $callerLogged || count($calls) !== $callerCalls) {
+    fail('een caller-exception mag geen fallback starten');
+}
+
+if (odata_bc_encode_environment('My%20Env') !== 'My%20Env' || odata_bc_encode_environment('My Env') !== 'My%20Env') {
+    fail('environment-segment moet precies één keer geëncodeerd worden');
+}
+
+odata_mimir_circuit_reset();
+$mimirBase = 'http://127.0.0.1:9';
+$environment = 'Production';
+$auth = ['mode' => 'basic', 'user' => 'bcuser', 'pass' => 'bc-secret'];
+$sandboxAuth = ['mode' => 'basic', 'user' => 'sandbox-user', 'pass' => 'sandbox-secret'];
+$auth_list = [
+    'Production' => $auth,
+    'Sandbox' => $sandboxAuth,
+];
+$GLOBALS['company_environment_map'] = [
+    'Hunter van Twist' => 'Sandbox',
+];
+$beforeSandbox = count($calls);
+$sandboxRows = odata_mimir_query('Hunter van Twist', 'AppResource', ['$select' => 'No'], 30);
+if (($sandboxRows[0]['No'] ?? '') !== 'WO-1') {
+    fail('tweede environment gaf geen stub-rijen');
+}
+$sandboxCall = $calls[$beforeSandbox] ?? null;
+if (!is_array($sandboxCall) || strpos($sandboxCall['url'], "https://bc.example:7148/Sandbox/ODataV4/Company('Hunter%20van%20Twist')/AppResource?") !== 0 || $sandboxCall['user'] !== 'sandbox-user') {
+    fail('query gebruikte niet het environment van het bedrijf: ' . json_encode($sandboxCall));
+}
+
+odata_mimir_circuit_reset();
+$beforeSandboxUrl = count($calls);
+$sandboxUrlRows = odata_get_all(
+    "https://mimir.invalid/mimir/ODataV4/Company('Hunter%20van%20Twist')/AppWerkorders?\$select=No",
+    $auth,
+    12
+);
+if (($sandboxUrlRows[0]['No'] ?? '') !== 'WO-1') {
+    fail('mimir-segment viel niet terug via de company-map');
+}
+$sandboxUrlCall = $calls[$beforeSandboxUrl] ?? null;
+$expectedSandboxUrl = "https://bc.example:7148/Sandbox/ODataV4/Company('Hunter%20van%20Twist')/AppWerkorders?\$select=No";
+if (!is_array($sandboxUrlCall) || $sandboxUrlCall['url'] !== $expectedSandboxUrl || $sandboxUrlCall['user'] !== 'sandbox-user') {
+    fail('URL-herschrijving hield het primaire environment: ' . json_encode($sandboxUrlCall));
+}
+$sandboxLog = fallback_log();
+if (strpos($sandboxLog, 'sandbox-secret') !== false || strpos($sandboxLog, 'bc-secret') !== false) {
+    fail('tweede-environment-log bevat een geheim');
+}
+$cacheKey = build_cache_key(
+    "https://mimir.invalid/mimir/ODataV4/Company('Hunter%20van%20Twist')/AppWerkorders",
+    $auth
+);
+if (substr($cacheKey, -strlen('|Sandbox')) !== '|Sandbox' || strpos($cacheKey, '|mimir') !== false) {
+    fail('cache-key moet het BC-environment van het bedrijf gebruiken, kreeg: ' . $cacheKey);
+}
+unset($GLOBALS['company_environment_map']);
+$auth_list = ['Production' => $auth];
+
 $loggedBeforeRethrow = fallback_count();
 $callsBeforeRethrow = count($calls);
 odata_mimir_circuit_reset();
@@ -222,5 +306,55 @@ $directCall = $calls[count($calls) - 1] ?? null;
 if (($directRows[0]['No'] ?? '') !== 'WO-1' || !is_array($directCall) || $directCall['url'] !== $directOnlyUrl) {
     fail('lege $mimirApi moet de oude directe route ongewijzigd gebruiken: ' . json_encode($directCall));
 }
+
+$authFile = sys_get_temp_dir() . '/kubera-auth-globals.php';
+file_put_contents($authFile, <<<'PHP'
+<?php
+$baseUrl = 'https://from-auth.example/';
+$environment = 'FromFile';
+$auth = ['mode' => 'basic', 'user' => 'file-user', 'pass' => 'file-secret'];
+$auth_list = ['FromFile' => $auth];
+$base = 'https://from-auth-base.example/';
+PHP);
+$savedGlobals = [
+    'baseUrl' => $GLOBALS['baseUrl'] ?? null,
+    'environment' => $GLOBALS['environment'] ?? null,
+    'auth' => $GLOBALS['auth'] ?? null,
+    'auth_list' => $GLOBALS['auth_list'] ?? null,
+    'base' => array_key_exists('base', $GLOBALS) ? $GLOBALS['base'] : null,
+    'base_set' => array_key_exists('base', $GLOBALS),
+];
+unset($GLOBALS['KUBERA_AUTH_PHP_INCLUDED']);
+$GLOBALS['KUBERA_AUTH_PHP_PATH'] = $authFile;
+$GLOBALS['baseUrl'] = 'https://already-set.example/';
+unset($GLOBALS['environment'], $GLOBALS['auth'], $GLOBALS['auth_list'], $GLOBALS['base']);
+odata_bc_ensure_auth_loaded();
+if (($GLOBALS['baseUrl'] ?? '') !== 'https://already-set.example/') {
+    fail('gezette baseUrl werd overschreven: ' . (string) ($GLOBALS['baseUrl'] ?? ''));
+}
+if (($GLOBALS['environment'] ?? '') !== 'FromFile') {
+    fail('environment uit auth.php kwam niet in $GLOBALS');
+}
+if (($GLOBALS['auth']['user'] ?? '') !== 'file-user') {
+    fail('auth uit auth.php kwam niet in $GLOBALS');
+}
+if (!isset($GLOBALS['auth_list']['FromFile']) || ($GLOBALS['base'] ?? '') !== 'https://from-auth-base.example/') {
+    fail('auth_list of base uit auth.php kwam niet in $GLOBALS');
+}
+odata_bc_ensure_auth_loaded();
+if (($GLOBALS['baseUrl'] ?? '') !== 'https://already-set.example/' || ($GLOBALS['environment'] ?? '') !== 'FromFile') {
+    fail('tweede load overschreef gezette globals');
+}
+$GLOBALS['baseUrl'] = $savedGlobals['baseUrl'];
+$GLOBALS['environment'] = $savedGlobals['environment'];
+$GLOBALS['auth'] = $savedGlobals['auth'];
+$GLOBALS['auth_list'] = $savedGlobals['auth_list'];
+if ($savedGlobals['base_set']) {
+    $GLOBALS['base'] = $savedGlobals['base'];
+} else {
+    unset($GLOBALS['base']);
+}
+unset($GLOBALS['KUBERA_AUTH_PHP_PATH'], $GLOBALS['KUBERA_AUTH_PHP_INCLUDED']);
+@unlink($authFile);
 
 echo "OK\n";
