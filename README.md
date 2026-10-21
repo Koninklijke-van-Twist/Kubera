@@ -7,3 +7,5 @@ Laat de Business Central-gegevens in datzelfde bestand staan, naast `$mimirApi`:
 Die fallback hoort in `web/odata.php`. Tim Falken keurde die uitzondering op de regel “`web/odata.php` niet aanpassen” goed op 2026-09-28.
 
 Er is geen aparte nightly-job in deze repo. `project_workorders_batch.php` is het HTTP-endpoint van de pagina; een CLI-script dat `odata.php` include't gebruikt dezelfde fallback (Mímir-timeout 600s op CLI, ongeveer 90s bij een webrequest, connect-timeout 10s).
+
+`web/analytics/analytics.sqlite` (en `*.sqlite-*`) blijft op de server staan bij een deploy: de FTP-mirror slaat die bestanden al over. Dezelfde mirror slaat `.htaccess` over, dus een gecommit bestand komt niet mee en een bestaand bestand wordt niet gewist. `analytics.php` schrijft `web/analytics/.htaccess` als die ontbreekt (of vult hem aan als het woord `sqlite` er nog niet in staat), zodat Apache de database weigert en `analytics.php` zelf bereikbaar blijft.
